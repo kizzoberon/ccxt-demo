@@ -36,6 +36,18 @@ class ExchangeManager:
                 'timeout': 30000,
                 'proxies': self.proxy_settings,
                 'options': {'verify': False}
+            }),
+            'binance': ccxt.binance({
+                'enableRateLimit': True,
+                'timeout': 30000,
+                'proxies': self.proxy_settings,
+                'options': {'verify': False}
+            }),
+            'okx': ccxt.okx({
+                'enableRateLimit': True,
+                'timeout': 30000,
+                'proxies': self.proxy_settings,
+                'options': {'verify': False}
             })
         }
         
@@ -77,10 +89,28 @@ class ExchangeManager:
         exchange.options['defaultType'] = market_type
         
         start_time = time.perf_counter()
-        tickers = exchange.fetch_tickers(symbols) if symbols else {}
-        fetch_time = (time.perf_counter() - start_time) * 1000
+        tickers = {}
         
+        # 如果是binance，需要分批获取数据
+        if exchange_id == 'binance':
+            # 每批处理100个交易对
+            batch_size = 100
+            for i in range(0, len(symbols), batch_size):
+                batch_symbols = symbols[i:i + batch_size]
+                try:
+                    batch_tickers = exchange.fetch_tickers(batch_symbols)
+                    tickers.update(batch_tickers)
+                    # 添加小延迟以避免触发频率限制
+                    time.sleep(0.1)
+                except Exception as e:
+                    self.logger.error(f"获取Binance批次数据失败 ({i}-{i+batch_size}): {str(e)}")
+        else:
+            # 其他交易所正常获取
+            tickers = exchange.fetch_tickers(symbols) if symbols else {}
+        
+        fetch_time = (time.perf_counter() - start_time) * 1000
         self.logger.info(f"Fetch {exchange_id} {market_type} tickers time: {fetch_time:.2f}ms")
+        
         return tickers
     
     def process_tickers(self, exchange_id: str, tickers: Dict) -> Dict:
@@ -108,10 +138,14 @@ class ExchangeManager:
         """计算套利手续费"""
         # 费率表 - 使用taker费率
         fees = {
-            'BYBIT:spot': {'taker': 0.001},  # 0.1%
-            'BYBIT:perp': {'taker': 0.0006}, # 0.06%
-            'BITGET:spot': {'taker': 0.001}, # 0.1%
-            'BITGET:perp': {'taker': 0.0006} # 0.06%
+            'BYBIT:spot': {'taker': 0.001},   # 0.1%
+            'BYBIT:perp': {'taker': 0.0006},  # 0.06%
+            'BITGET:spot': {'taker': 0.001},  # 0.1%
+            'BITGET:perp': {'taker': 0.0006}, # 0.06%
+            'BINANCE:spot': {'taker': 0.001}, # 0.1%
+            'BINANCE:perp': {'taker': 0.0004},# 0.04%
+            'OKX:spot': {'taker': 0.001},     # 0.1%
+            'OKX:perp': {'taker': 0.0005}     # 0.05%
         }
         
         market1_fee = fees[market1]['taker']
@@ -184,7 +218,11 @@ def get_exchange_price_diff():
                         {'name': 'BYBIT:spot', 'data': exchange_data['bybit']['spot'][base]},
                         {'name': 'BYBIT:perp', 'data': exchange_data['bybit']['swap'][base]},
                         {'name': 'BITGET:spot', 'data': exchange_data['bitget']['spot'][base]},
-                        {'name': 'BITGET:perp', 'data': exchange_data['bitget']['swap'][base]}
+                        {'name': 'BITGET:perp', 'data': exchange_data['bitget']['swap'][base]},
+                        {'name': 'BINANCE:spot', 'data': exchange_data['binance']['spot'][base]},
+                        {'name': 'BINANCE:perp', 'data': exchange_data['binance']['swap'][base]},
+                        {'name': 'OKX:spot', 'data': exchange_data['okx']['spot'][base]},
+                        {'name': 'OKX:perp', 'data': exchange_data['okx']['swap'][base]}
                     ]
                     
                     max_diff_info = None
@@ -205,7 +243,8 @@ def get_exchange_price_diff():
                                 ask_price = market_i['data']['ask']
                                 bid_price = market_j['data']['bid']
                                 
-                                if ask_price > 0 and bid_price > 0:
+                                # 检查价格是否为None或者0
+                                if ask_price is not None and bid_price is not None and ask_price > 0 and bid_price > 0:
                                     # 计算可交易数量和对应的USDT价值
                                     tradeable_value_usdt = min(
                                         market_i['data']['askVolume'] * market_i['data']['ask'],
@@ -287,7 +326,7 @@ def get_exchange_price_diff():
                 
             except Exception as e:
                 retry_count += 1
-                manager.logger.error(f"错误: {str(e)}")
+                manager.logger.error(f"错误: {str(e)}", exc_info=True)
                 if retry_count == max_retries:
                     manager.logger.error("达到最大重试次数，等待下一轮")
                 time.sleep(2 ** retry_count)
