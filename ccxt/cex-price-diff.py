@@ -83,7 +83,7 @@ class ExchangeManager:
         self.logger.info(f"Fetch {exchange_id} {market_type} tickers time: {fetch_time:.2f}ms")
         return tickers
     
-    def process_tickers(self, exchange_id: str, tickers: Dict, market_type: str) -> Dict:
+    def process_tickers(self, exchange_id: str, tickers: Dict) -> Dict:
         """处理ticker数据"""
         prices = {}
         markets = self.markets[exchange_id]
@@ -154,13 +154,11 @@ def get_exchange_price_diff():
                     exchange_data[exchange_id] = {
                         'spot': manager.process_tickers(
                             exchange_id,
-                            manager.fetch_tickers(exchange_id, 'spot', manager.symbols[exchange_id]['spot']),
-                            'spot'
+                            manager.fetch_tickers(exchange_id, 'spot', manager.symbols[exchange_id]['spot'])
                         ),
                         'swap': manager.process_tickers(
                             exchange_id,
-                            manager.fetch_tickers(exchange_id, 'swap', manager.symbols[exchange_id]['swap']),
-                            'swap'
+                            manager.fetch_tickers(exchange_id, 'swap', manager.symbols[exchange_id]['swap'])
                         )
                     }
                 
@@ -209,16 +207,15 @@ def get_exchange_price_diff():
                                 
                                 if ask_price > 0 and bid_price > 0:
                                     # 计算可交易数量和对应的USDT价值
-                                    tradeable_volume = min(
-                                        market_i['data']['askVolume'],
-                                        market_j['data']['bidVolume']
+                                    tradeable_value_usdt = min(
+                                        market_i['data']['askVolume'] * market_i['data']['ask'],
+                                        market_j['data']['bidVolume'] * market_j['data']['bid']
                                     )
-                                    tradeable_value_usdt = tradeable_volume * ask_price
-                                    
-                                    # 只处理流动性大于1000 USDT的交易对
-                                    if tradeable_value_usdt >= 1000:
+
+                                    # 只处理流动性大于50 USDT的交易对
+                                    if tradeable_value_usdt >= 50:
                                         # 计算价差
-                                        diff = ((bid_price - ask_price) / ask_price) * 100
+                                        diff = ((bid_price - ask_price) / ((ask_price + bid_price) / 2)) * 100
                                         
                                         if diff > max_diff_value and diff > 0:
                                             max_diff_value = diff
@@ -231,7 +228,6 @@ def get_exchange_price_diff():
                                                 'bid_price': bid_price,
                                                 'ask_volume': market_i['data']['askVolume'],
                                                 'bid_volume': market_j['data']['bidVolume'],
-                                                'tradeable_volume': tradeable_volume,
                                                 'tradeable_value_usdt': tradeable_value_usdt,
                                                 'symbols': {
                                                     'market1': market_i['data']['symbol'],
@@ -257,8 +253,13 @@ def get_exchange_price_diff():
                 # 输出前10个最大价差
                 for diff_info in top_diffs:
                     # 获取两个市场的完整数据
-                    market1_data = next(m['data'] for m in markets_data if m['name'] == diff_info['market1'])
-                    market2_data = next(m['data'] for m in markets_data if m['name'] == diff_info['market2'])
+                    market1_data = exchange_data[diff_info['market1'].split(':')[0].lower()][
+                        'spot' if ':spot' in diff_info['market1'] else 'swap'
+                    ][diff_info['base']]
+                    
+                    market2_data = exchange_data[diff_info['market2'].split(':')[0].lower()][
+                        'spot' if ':spot' in diff_info['market2'] else 'swap'
+                    ][diff_info['base']]
                     
                     # 计算手续费
                     total_fees = manager.calculate_fees(diff_info['market1'], diff_info['market2'])
@@ -267,7 +268,7 @@ def get_exchange_price_diff():
                     net_profit = diff_info['diff'] - total_fees
                     
                     # 计算交易量（USDT）
-                    volume_usdt = diff_info['tradeable_volume'] * diff_info['ask_price']
+                    volume_usdt = diff_info['tradeable_value_usdt']
                     
                     # 使用不同颜色显示净利润
                     profit_color = GREEN if net_profit > 0 else '\033[31m'
