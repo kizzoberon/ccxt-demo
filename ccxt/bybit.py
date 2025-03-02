@@ -15,8 +15,8 @@ def get_bybit_price_diff():
     
     # 配置代理设置
     proxies = {
-        'http': 'http://127.0.0.1:7897',  # 根据你的实际代理端口修改
-        'https': 'http://127.0.0.1:7897'  # 根据你的实际代理端口修改
+        'http': 'http://127.0.0.1:7897',
+        'https': 'http://127.0.0.1:7897'
     }
     
     # 初始化ByBit交易所
@@ -33,49 +33,55 @@ def get_bybit_price_diff():
 
     # 加载市场信息
     markets = exchange.load_markets()
-    # 过滤出仅包含BTC和USDT的交易对
-    market_list = [symbol for symbol in markets if 'BTC' in symbol and 'USDT' in symbol]
+    
+    # 分别过滤出现货和合约的BTC交易对
+    spot_symbols = [symbol for symbol in markets if 'BTC' in symbol and 'USDT' in symbol and markets[symbol]['spot']]
+    perp_symbols = [symbol for symbol in markets if 'BTC' in symbol and 'USDT' in symbol and markets[symbol]['swap']]
+    
+    logger.info(f"Spot symbols: {spot_symbols}")
+    logger.info(f"Perp symbols: {perp_symbols}")
+    
     while True:
         retry_count = 0
         while retry_count < max_retries:
             try:
-                # 获取所有交易对的最新行情
                 # 获取现货市场价格
                 exchange.options['defaultType'] = 'spot'
-                spot_tickers = exchange.fetch_tickers()
+                start_time = time.perf_counter()
+                spot_tickers = exchange.fetch_tickers(spot_symbols) if spot_symbols else {}
+                spot_time = (time.perf_counter() - start_time) * 1000  # 转换为毫秒
 
                 # 获取合约市场价格
                 exchange.options['defaultType'] = 'swap'
-                perp_tickers = exchange.fetch_tickers()
-                tickers = {**spot_tickers, **perp_tickers}
-                # 过滤出仅包含BTC的交易对
-                tickers = {symbol: ticker for symbol, ticker in tickers.items() if symbol in market_list}
+                start_time = time.perf_counter()
+                perp_tickers = exchange.fetch_tickers(perp_symbols) if perp_symbols else {}
+                perp_time = (time.perf_counter() - start_time) * 1000  # 转换为毫秒
+                
+                logger.info(f"Fetch spot tickers time: {spot_time:.2f}ms")
+                logger.info(f"Fetch perp tickers time: {perp_time:.2f}ms")
+                logger.info(f"Total fetch time: {spot_time + perp_time:.2f}ms")
                 
                 # 存储现货和合约的价格
                 spot_prices = {}
                 perp_prices = {}
                 
-                # 遍历所有交易对
-                for symbol, ticker in tickers.items():
-                    if ticker['last'] is None:  # 跳过没有最新价格的交易对
-                        continue
-                    
-                    # 获取市场信息
-                    market = markets.get(symbol)
-                    if market is None:
-                        continue
-                        
-                    # 根据市场类型分类
-                    base = market['base']
-                    if 'USDT' in base:  # 去除基础货币中的USDT
-                        base = base.replace('USDT', '')
-                    
-                    if market['spot']:  # 现货市场
+                # 处理现货价格
+                for symbol, ticker in spot_tickers.items():
+                    if ticker['last'] is not None:
+                        base = markets[symbol]['base']
+                        if 'USDT' in base:
+                            base = base.replace('USDT', '')
                         spot_prices[base] = {
                             'price': ticker['last'],
                             'symbol': symbol
                         }
-                    elif market['swap']:  # 永续合约市场
+                
+                # 处理合约价格
+                for symbol, ticker in perp_tickers.items():
+                    if ticker['last'] is not None:
+                        base = markets[symbol]['base']
+                        if 'USDT' in base:
+                            base = base.replace('USDT', '')
                         perp_prices[base] = {
                             'price': ticker['last'],
                             'symbol': symbol
