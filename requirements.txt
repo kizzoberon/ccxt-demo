@@ -1,0 +1,7 @@
+# 导入ccxt依赖
+ccxt
+
+# 导入pandas依赖
+pandas
+urllib3==1.26.6
+
