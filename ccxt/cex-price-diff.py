@@ -95,9 +95,37 @@ class ExchangeManager:
                     base = base.replace('USDT', '')
                 prices[base] = {
                     'price': ticker['last'],
-                    'symbol': symbol
+                    'symbol': symbol,
+                    'bid': ticker['bid'],
+                    'ask': ticker['ask'],
+                    'bidVolume': ticker['bidVolume'],
+                    'askVolume': ticker['askVolume'],
+                    'baseVolume': ticker['baseVolume']  # 24小时交易量
                 }
         return prices
+
+    def calculate_fees(self, market1: str, market2: str) -> float:
+        """计算套利手续费"""
+        # 费率表 - 使用taker费率
+        fees = {
+            'BYBIT:spot': {'taker': 0.001},  # 0.1%
+            'BYBIT:perp': {'taker': 0.0006}, # 0.06%
+            'BITGET:spot': {'taker': 0.001}, # 0.1%
+            'BITGET:perp': {'taker': 0.0006} # 0.06%
+        }
+        
+        market1_fee = fees[market1]['taker']
+        market2_fee = fees[market2]['taker']
+        
+        # 判断是否为合约套利
+        is_perp_arb = ':perp' in market1 or ':perp' in market2
+        
+        if is_perp_arb:
+            # 合约套利：开仓+平仓 (共4笔费用)
+            return (market1_fee + market2_fee) * 2 * 100  # 转换为百分比
+        else:
+            # 现货套利：一次买入一次卖出 (共2笔费用)
+            return (market1_fee + market2_fee) * 100  # 转换为百分比
 
 def get_exchange_price_diff():
     # 初始化交易所管理器
@@ -144,49 +172,54 @@ def get_exchange_price_diff():
                 # 计算所有币对的价差
                 for base in common_bases:
                     # 收集所有价格和符号
-                    bybit_spot = exchange_data['bybit']['spot'][base]
-                    bybit_perp = exchange_data['bybit']['swap'][base]
-                    bitget_spot = exchange_data['bitget']['spot'][base]
-                    bitget_perp = exchange_data['bitget']['swap'][base]
-                    
-                    # 收集所有价格
-                    prices = [
-                        bybit_spot['price'],   # price1
-                        bybit_perp['price'],   # price2
-                        bitget_spot['price'],  # price3
-                        bitget_perp['price']   # price4
+                    markets_data = [
+                        {'name': 'BYBIT:spot', 'data': exchange_data['bybit']['spot'][base]},
+                        {'name': 'BYBIT:perp', 'data': exchange_data['bybit']['swap'][base]},
+                        {'name': 'BITGET:spot', 'data': exchange_data['bitget']['spot'][base]},
+                        {'name': 'BITGET:perp', 'data': exchange_data['bitget']['swap'][base]}
                     ]
                     
-                    # 找出该币对的最大价差
                     max_diff_info = None
                     max_diff_value = -1
                     
-                    # 计算所有可能的价差
-                    for i in range(len(prices)):
-                        for j in range(i + 1, len(prices)):
-                            # 始终用大的价格减去小的价格，确保价差为正
-                            high_price = max(prices[i], prices[j])
-                            low_price = min(prices[i], prices[j])
-                            diff = ((high_price - low_price) / ((high_price + low_price) / 2)) * 100
-                            
-                            # 如果是最大价差，更新信息
-                            if diff > max_diff_value:
-                                max_diff_value = diff
-                                # 如果原始的i,j顺序产生的是负值，需要交换顺序
-                                if prices[j] < prices[i]:
-                                    i, j = j, i
-                                max_diff_info = {
-                                    'base': base,
-                                    'diff': diff,
-                                    'prices': prices,
-                                    'indices': (i, j),
-                                    'symbols': {
-                                        'bybit_spot': bybit_spot['symbol'],
-                                        'bybit_perp': bybit_perp['symbol'],
-                                        'bitget_spot': bitget_spot['symbol'],
-                                        'bitget_perp': bitget_perp['symbol']
-                                    }
-                                }
+                    # 计算所有可能的价差组合
+                    for i in range(len(markets_data)):
+                        for j in range(len(markets_data)):
+                            if i != j:  # 不同市场之间比较
+                                market_i = markets_data[i]
+                                market_j = markets_data[j]
+                                
+                                # 使用ask和bid价格计算价差
+                                ask_price = market_i['data']['ask']
+                                bid_price = market_j['data']['bid']
+                                
+                                if ask_price > 0 and bid_price > 0:
+                                    # 计算价差
+                                    diff = ((bid_price - ask_price) / ask_price) * 100
+                                    
+                                    # 计算可交易数量
+                                    tradeable_volume = min(
+                                        market_i['data']['askVolume'],
+                                        market_j['data']['bidVolume']
+                                    )
+                                    
+                                    if diff > max_diff_value and diff > 0:
+                                        max_diff_value = diff
+                                        max_diff_info = {
+                                            'base': base,
+                                            'diff': diff,
+                                            'market1': market_i['name'],
+                                            'market2': market_j['name'],
+                                            'ask_price': ask_price,
+                                            'bid_price': bid_price,
+                                            'ask_volume': market_i['data']['askVolume'],
+                                            'bid_volume': market_j['data']['bidVolume'],
+                                            'tradeable_volume': tradeable_volume,
+                                            'symbols': {
+                                                'market1': market_i['data']['symbol'],
+                                                'market2': market_j['data']['symbol']
+                                            }
+                                        }
                     
                     # 存储该币对的最大价差信息
                     if max_diff_info:
@@ -198,20 +231,33 @@ def get_exchange_price_diff():
                 # 清屏
                 print('\033[2J\033[H', end='')
                 print(f"Top 10 Price Differences - {current_time}")
-                print("-" * 150)
+                print("-" * 180)
+                print(f"{'Symbol':<10} {'Markets':<30} {'Ask':<12} {'Bid':<12} "
+                      f"{'MaxDiff':<12} {'Volume(USDT)':<15} {'Fees':<10} {'Net Profit':<12}")
+                print("-" * 180)
                 
                 # 输出前10个最大价差
                 for diff_info in top_diffs:
-                    markets = ['BYBIT:spot', 'BYBIT:perp', 'BITGET:spot', 'BITGET:perp']
-                    max_diff_desc = f"{markets[diff_info['indices'][0]]}-{markets[diff_info['indices'][1]]}"
+                    # 计算手续费
+                    total_fees = manager.calculate_fees(diff_info['market1'], diff_info['market2'])
                     
-                    print(f"BYBIT:{diff_info['symbols']['bybit_spot']} "
-                          f"BYBIT:{diff_info['symbols']['bybit_perp']} "
-                          f"BITGET:{diff_info['symbols']['bitget_spot']} "
-                          f"BITGET:{diff_info['symbols']['bitget_perp']} "
-                          f"{diff_info['prices'][0]:.8f} {diff_info['prices'][1]:.8f} "
-                          f"{diff_info['prices'][2]:.8f} {diff_info['prices'][3]:.8f} "
-                          f"MaxDiff({max_diff_desc}): {GREEN}{diff_info['diff']:.4f}%{RESET} {current_time}")
+                    # 计算净利润
+                    net_profit = diff_info['diff'] - total_fees
+                    
+                    # 计算交易量（USDT）
+                    volume_usdt = diff_info['tradeable_volume'] * diff_info['ask_price']
+                    
+                    # 使用不同颜色显示净利润
+                    profit_color = GREEN if net_profit > 0 else '\033[31m'
+                    
+                    print(f"{diff_info['base']:<10} "
+                          f"{diff_info['market1']}->>{diff_info['market2']:<10} "
+                          f"{diff_info['ask_price']:<12.8f} "
+                          f"{diff_info['bid_price']:<12.8f} "
+                          f"{profit_color}{diff_info['diff']:>7.4f}%{RESET} "
+                          f"${volume_usdt:<14,.2f} "
+                          f"{total_fees:>7.4f}% "
+                          f"{profit_color}{net_profit:>7.4f}%{RESET}")
                 
                 break
                 
