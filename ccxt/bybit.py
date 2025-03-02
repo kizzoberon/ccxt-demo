@@ -4,6 +4,10 @@ from datetime import datetime
 import logging
 from typing import Dict, List, Optional
 
+# 在文件开头添加颜色常量
+GREEN = '\033[32m'
+RESET = '\033[0m'
+
 def setup_logger():
     logging.basicConfig(
         level=logging.INFO,
@@ -48,12 +52,12 @@ class ExchangeManager:
             try:
                 self.markets[exchange_id] = exchange.load_markets()
                 
-                # 获取BTC交易对
+                # 获取所有USDT交易对
                 spot_symbols = [symbol for symbol in self.markets[exchange_id] 
-                              if 'BTC' in symbol and 'USDT' in symbol 
+                              if 'USDT' in symbol 
                               and self.markets[exchange_id][symbol].get('spot')]
                 perp_symbols = [symbol for symbol in self.markets[exchange_id] 
-                              if 'BTC' in symbol and 'USDT' in symbol 
+                              if 'USDT' in symbol 
                               and self.markets[exchange_id][symbol].get('swap')]
                 
                 self.symbols[exchange_id] = {
@@ -61,8 +65,8 @@ class ExchangeManager:
                     'swap': perp_symbols
                 }
                 
-                self.logger.info(f"{exchange_id.upper()} Spot symbols: {spot_symbols}")
-                self.logger.info(f"{exchange_id.upper()} Perp symbols: {perp_symbols}")
+                self.logger.info(f"{exchange_id.upper()} Spot symbols count: {len(spot_symbols)}")
+                self.logger.info(f"{exchange_id.upper()} Perp symbols count: {len(perp_symbols)}")
                 
             except Exception as e:
                 self.logger.error(f"初始化{exchange_id}失败: {str(e)}")
@@ -134,7 +138,10 @@ def get_exchange_price_diff():
                     else:
                         common_bases &= (spot_bases & swap_bases)
                 
-                # 输出价格差
+                # 存储所有币对的最大价差信息
+                max_diffs_by_base = {}
+                
+                # 计算所有币对的价差
                 for base in common_bases:
                     # 收集所有价格和符号
                     bybit_spot = exchange_data['bybit']['spot'][base]
@@ -150,8 +157,11 @@ def get_exchange_price_diff():
                         bitget_perp['price']   # price4
                     ]
                     
+                    # 找出该币对的最大价差
+                    max_diff_info = None
+                    max_diff_value = -1
+                    
                     # 计算所有可能的价差
-                    diffs = []
                     for i in range(len(prices)):
                         for j in range(i + 1, len(prices)):
                             # 始终用大的价格减去小的价格，确保价差为正
@@ -159,24 +169,49 @@ def get_exchange_price_diff():
                             low_price = min(prices[i], prices[j])
                             diff = ((high_price - low_price) / ((high_price + low_price) / 2)) * 100
                             
-                            # 如果原始的i,j顺序产生的是负值，需要交换顺序
-                            if prices[j] < prices[i]:
-                                i, j = j, i
-                            
-                            diffs.append((diff, diff, i, j))
+                            # 如果是最大价差，更新信息
+                            if diff > max_diff_value:
+                                max_diff_value = diff
+                                # 如果原始的i,j顺序产生的是负值，需要交换顺序
+                                if prices[j] < prices[i]:
+                                    i, j = j, i
+                                max_diff_info = {
+                                    'base': base,
+                                    'diff': diff,
+                                    'prices': prices,
+                                    'indices': (i, j),
+                                    'symbols': {
+                                        'bybit_spot': bybit_spot['symbol'],
+                                        'bybit_perp': bybit_perp['symbol'],
+                                        'bitget_spot': bitget_spot['symbol'],
+                                        'bitget_perp': bitget_perp['symbol']
+                                    }
+                                }
                     
-                    # 找出最大价差
-                    max_diff = max(diffs, key=lambda x: x[0])
-                    
-                    # 获取价差对应的交易所和市场类型
+                    # 存储该币对的最大价差信息
+                    if max_diff_info:
+                        max_diffs_by_base[base] = max_diff_info
+                
+                # 按价差降序排序并获取前10个
+                top_diffs = sorted(max_diffs_by_base.values(), key=lambda x: x['diff'], reverse=True)[:10]
+                
+                # 清屏
+                print('\033[2J\033[H', end='')
+                print(f"Top 10 Price Differences - {current_time}")
+                print("-" * 150)
+                
+                # 输出前10个最大价差
+                for diff_info in top_diffs:
                     markets = ['BYBIT:spot', 'BYBIT:perp', 'BITGET:spot', 'BITGET:perp']
-                    max_diff_desc = f"{markets[max_diff[2]]}-{markets[max_diff[3]]}"
+                    max_diff_desc = f"{markets[diff_info['indices'][0]]}-{markets[diff_info['indices'][1]]}"
                     
-                    # 按照要求格式输出
-                    print(f"BYBIT:{bybit_spot['symbol']} BYBIT:{bybit_perp['symbol']} "
-                          f"BITGET:{bitget_spot['symbol']} BITGET:{bitget_perp['symbol']} "
-                          f"{prices[0]:.8f} {prices[1]:.8f} {prices[2]:.8f} {prices[3]:.8f} "
-                          f"MaxDiff({max_diff_desc}): {max_diff[1]:.4f}% {current_time}")
+                    print(f"BYBIT:{diff_info['symbols']['bybit_spot']} "
+                          f"BYBIT:{diff_info['symbols']['bybit_perp']} "
+                          f"BITGET:{diff_info['symbols']['bitget_spot']} "
+                          f"BITGET:{diff_info['symbols']['bitget_perp']} "
+                          f"{diff_info['prices'][0]:.8f} {diff_info['prices'][1]:.8f} "
+                          f"{diff_info['prices'][2]:.8f} {diff_info['prices'][3]:.8f} "
+                          f"MaxDiff({max_diff_desc}): {GREEN}{diff_info['diff']:.4f}%{RESET} {current_time}")
                 
                 break
                 
