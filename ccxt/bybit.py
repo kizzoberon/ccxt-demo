@@ -1,8 +1,6 @@
 import ccxt
 import time
 from datetime import datetime
-import pandas as pd
-from requests.exceptions import RequestException
 import logging
 
 def setup_logger():
@@ -13,9 +11,8 @@ def setup_logger():
     return logging.getLogger(__name__)
 
 def get_bybit_price_diff():
-    # 初始化日志
     logger = setup_logger()
-
+    
     # 配置代理设置
     proxies = {
         'http': 'http://127.0.0.1:7897',  # 根据你的实际代理端口修改
@@ -24,23 +21,35 @@ def get_bybit_price_diff():
     
     # 初始化ByBit交易所
     exchange = ccxt.bybit({
-        'enableRateLimit': True,  # 启用请求频率限制
-        'timeout': 10000,  # 设置超时时间为30秒
-        'proxies': proxies,  # 添加代理配置
+        'enableRateLimit': True,
+        'timeout': 30000,
+        'proxies': proxies,
         'options': {
-            'verify': False  # 如果遇到SSL证书问题，可以禁用验证
+            'verify': False
         }
     })
     
-    # 设置重试次数
     max_retries = 3
-    
+
+    # 加载市场信息
+    markets = exchange.load_markets()
+    # 过滤出仅包含BTC和USDT的交易对
+    market_list = [symbol for symbol in markets if 'BTC' in symbol and 'USDT' in symbol]
     while True:
         retry_count = 0
         while retry_count < max_retries:
             try:
                 # 获取所有交易对的最新行情
-                tickers = exchange.fetch_tickers()
+                # 获取现货市场价格
+                exchange.options['defaultType'] = 'spot'
+                spot_tickers = exchange.fetch_tickers()
+
+                # 获取合约市场价格
+                exchange.options['defaultType'] = 'swap'
+                perp_tickers = exchange.fetch_tickers()
+                tickers = {**spot_tickers, **perp_tickers}
+                # 过滤出仅包含BTC的交易对
+                tickers = {symbol: ticker for symbol, ticker in tickers.items() if symbol in market_list}
                 
                 # 存储现货和合约的价格
                 spot_prices = {}
@@ -50,16 +59,23 @@ def get_bybit_price_diff():
                 for symbol, ticker in tickers.items():
                     if ticker['last'] is None:  # 跳过没有最新价格的交易对
                         continue
+                    
+                    # 获取市场信息
+                    market = markets.get(symbol)
+                    if market is None:
+                        continue
                         
-                    # 区分现货和合约
-                    if 'SPOT' in symbol:
-                        base = symbol.replace('SPOT', '').replace('USDT', '')
+                    # 根据市场类型分类
+                    base = market['base']
+                    if 'USDT' in base:  # 去除基础货币中的USDT
+                        base = base.replace('USDT', '')
+                    
+                    if market['spot']:  # 现货市场
                         spot_prices[base] = {
                             'price': ticker['last'],
                             'symbol': symbol
                         }
-                    elif 'PERP' in symbol:
-                        base = symbol.replace('PERP', '').replace('USDT', '')
+                    elif market['swap']:  # 永续合约市场
                         perp_prices[base] = {
                             'price': ticker['last'],
                             'symbol': symbol
@@ -78,7 +94,10 @@ def get_bybit_price_diff():
                     spot_price = spot_prices[pair]['price']
                     perp_price = perp_prices[pair]['price']
                     
-                    print(f"{spot_symbol} {perp_symbol} {spot_price:.8f} {perp_price:.8f} {current_time}")
+                    # 计算价差百分比
+                    price_diff_pct = ((perp_price - spot_price) / ((spot_price + perp_price) / 2)) * 100
+                    
+                    print(f"{spot_symbol} {perp_symbol} {spot_price:.8f} {perp_price:.8f} {price_diff_pct:.4f}% {current_time}")
                 
                 # 如果成功，跳出重试循环
                 break
@@ -88,7 +107,7 @@ def get_bybit_price_diff():
                 logger.error(f"网络错误 (尝试 {retry_count}/{max_retries}): {str(e)}")
                 if retry_count == max_retries:
                     logger.error("达到最大重试次数，等待下一轮")
-                time.sleep(2 ** retry_count)  # 指数退避
+                time.sleep(2 ** retry_count)
                 
             except ccxt.ExchangeError as e:
                 logger.error(f"交易所错误: {str(e)}")
