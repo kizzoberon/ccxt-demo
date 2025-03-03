@@ -3,6 +3,7 @@ import time
 from datetime import datetime
 import logging
 from typing import Dict, List, Optional
+import concurrent.futures
 
 # 在文件开头添加颜色常量
 GREEN = '\033[32m'
@@ -91,22 +92,34 @@ class ExchangeManager:
         start_time = time.perf_counter()
         tickers = {}
         
+        def fetch_batch(batch_symbols):
+            try:
+                return exchange.fetch_tickers(batch_symbols)
+            except Exception as e:
+                self.logger.error(f"获取{exchange_id}数据失败: {str(e)}")
+                return {}
+    
         # 如果是binance，需要分批获取数据
         if exchange_id == 'binance':
             # 每批处理100个交易对
-            batch_size = 100
-            for i in range(0, len(symbols), batch_size):
-                batch_symbols = symbols[i:i + batch_size]
-                try:
-                    batch_tickers = exchange.fetch_tickers(batch_symbols)
-                    tickers.update(batch_tickers)
-                    # 添加小延迟以避免触发频率限制
-                    time.sleep(0.1)
-                except Exception as e:
-                    self.logger.error(f"获取Binance批次数据失败 ({i}-{i+batch_size}): {str(e)}")
+            batch_size = 200
+            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+                futures = [
+                    executor.submit(fetch_batch, symbols[i:i + batch_size])
+                    for i in range(0, len(symbols), batch_size)
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    tickers.update(future.result())
         else:
-            # 其他交易所正常获取
-            tickers = exchange.fetch_tickers(symbols) if symbols else {}
+            # 其他交易所使用多线程并发获取
+            batch_size = 100  # 根据交易所API限制调整
+            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+                futures = [
+                    executor.submit(fetch_batch, symbols[i:i + batch_size])
+                    for i in range(0, len(symbols), batch_size)
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    tickers.update(future.result())
         
         fetch_time = (time.perf_counter() - start_time) * 1000
         self.logger.info(f"Fetch {exchange_id} {market_type} tickers time: {fetch_time:.2f}ms")
