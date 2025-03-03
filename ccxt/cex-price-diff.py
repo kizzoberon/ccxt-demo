@@ -28,25 +28,25 @@ class ExchangeManager:
         self.exchanges = {
             'bybit': ccxt.bybit({
                 'enableRateLimit': True,
-                'timeout': 30000,
+                'timeout': 10000,
                 'proxies': self.proxy_settings,
                 'options': {'verify': False}
             }),
             'bitget': ccxt.bitget({
                 'enableRateLimit': True,
-                'timeout': 30000,
+                'timeout': 10000,
                 'proxies': self.proxy_settings,
                 'options': {'verify': False}
             }),
             'binance': ccxt.binance({
                 'enableRateLimit': True,
-                'timeout': 30000,
+                'timeout': 10000,
                 'proxies': self.proxy_settings,
                 'options': {'verify': False}
             }),
             'okx': ccxt.okx({
                 'enableRateLimit': True,
-                'timeout': 30000,
+                'timeout': 10000,
                 'proxies': self.proxy_settings,
                 'options': {'verify': False}
             })
@@ -279,7 +279,7 @@ def get_exchange_price_diff():
                                                     diff = ((bid_price - ask_price) / ((ask_price + bid_price) / 2)) * 100
 
                                                     # 生成 market1 和 market2 的组合名称
-                                                    pair_name = f"{market_k['name']}_{market_l['name']}"
+                                                    pair_name = f"{base}{market_k['name']}_{market_l['name']}"
                                                     if pair_name not in processed_pairs:
                                                         if 0 < diff < 100:
                                                             diff_info = {
