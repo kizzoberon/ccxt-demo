@@ -136,6 +136,8 @@ class ExchangeManager:
                 base = markets[symbol]['base']
                 if 'USDT' in base:
                     base = base.replace('USDT', '')
+                if base == '':
+                    continue
                 prices[base] = {
                     'price': ticker['last'],
                     'symbol': symbol,
@@ -180,6 +182,9 @@ def is_valid_arb_direction(market1: str, market2: str) -> bool:
     market1: 买入市场
     market2: 卖出市场
     """
+    if market1 == market2:
+        return False
+
     # 如果是买入合约卖出现货的组合，返回False
     if ':perp' in market1 and ':spot' in market2:
         return False
@@ -189,13 +194,13 @@ def get_exchange_price_diff():
     # 初始化交易所管理器
     manager = ExchangeManager('http://127.0.0.1:7897')
     max_retries = 3
-    
+
     while True:
         retry_count = 0
         while retry_count < max_retries:
             try:
                 exchange_data = {}
-                
+
                 # 获取所有交易所的数据
                 for exchange_id in manager.exchanges:
                     exchange_data[exchange_id] = {
@@ -208,92 +213,106 @@ def get_exchange_price_diff():
                             manager.fetch_tickers(exchange_id, 'swap', manager.symbols[exchange_id]['swap'])
                         )
                     }
-                
+
                 # 获取当前时间
                 current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                
-                # 找出所有交易所都有的币对
-                common_bases = set()
-                for exchange_id in exchange_data:
-                    spot_bases = set(exchange_data[exchange_id]['spot'].keys())
-                    swap_bases = set(exchange_data[exchange_id]['swap'].keys())
-                    if not common_bases:
-                        common_bases = spot_bases & swap_bases
-                    else:
-                        common_bases &= (spot_bases & swap_bases)
-                
-                # 存储所有币对的最大价差信息
-                max_diffs_by_base = {}
-                
-                # 计算所有币对的价差
-                for base in common_bases:
-                    markets_data = [
-                        {'name': 'BYBIT:spot', 'data': exchange_data['bybit']['spot'][base]},
-                        {'name': 'BYBIT:perp', 'data': exchange_data['bybit']['swap'][base]},
-                        {'name': 'BITGET:spot', 'data': exchange_data['bitget']['spot'][base]},
-                        {'name': 'BITGET:perp', 'data': exchange_data['bitget']['swap'][base]},
-                        {'name': 'BINANCE:spot', 'data': exchange_data['binance']['spot'][base]},
-                        {'name': 'BINANCE:perp', 'data': exchange_data['binance']['swap'][base]},
-                        {'name': 'OKX:spot', 'data': exchange_data['okx']['spot'][base]},
-                        {'name': 'OKX:perp', 'data': exchange_data['okx']['swap'][base]}
-                    ]
-                    
-                    max_diff_info = None
-                    max_diff_value = -1
-                    
-                    # 计算所有可能的价差组合
-                    for i in range(len(markets_data)):
-                        for j in range(len(markets_data)):
-                            if i != j:  # 不同市场之间比较
-                                market_i = markets_data[i]
-                                market_j = markets_data[j]
-                                
-                                # 检查交易方向是否有效
-                                if not is_valid_arb_direction(market_i['name'], market_j['name']):
-                                    continue
-                                
-                                # 使用ask和bid价格计算价差
-                                ask_price = market_i['data']['ask']
-                                bid_price = market_j['data']['bid']
-                                
-                                # 检查价格是否为None或者0
-                                if ask_price is not None and bid_price is not None and ask_price > 0 and bid_price > 0:
-                                    # 计算可交易数量和对应的USDT价值
-                                    tradeable_value_usdt = min(
-                                        market_i['data']['askVolume'] * market_i['data']['ask'],
-                                        market_j['data']['bidVolume'] * market_j['data']['bid']
-                                    )
 
-                                    # 只处理流动性大于50 USDT的交易对
-                                    if tradeable_value_usdt >= 50:
-                                        # 计算价差
-                                        diff = ((bid_price - ask_price) / ((ask_price + bid_price) / 2)) * 100
-                                        
-                                        if diff > max_diff_value and diff > 0:
-                                            max_diff_value = diff
-                                            max_diff_info = {
-                                                'base': base,
-                                                'diff': diff,
-                                                'market1': market_i['name'],
-                                                'market2': market_j['name'],
-                                                'ask_price': ask_price,
-                                                'bid_price': bid_price,
-                                                'ask_volume': market_i['data']['askVolume'],
-                                                'bid_volume': market_j['data']['bidVolume'],
-                                                'tradeable_value_usdt': tradeable_value_usdt,
-                                                'symbols': {
-                                                    'market1': market_i['data']['symbol'],
-                                                    'market2': market_j['data']['symbol']
-                                                }
-                                            }
-                    
-                    # 只存储有效的价差信息
-                    if max_diff_info:
-                        max_diffs_by_base[base] = max_diff_info
-                
+                # 存储所有币对的最大价差信息
+                all_diffs = []
+                # 用于记录已经处理过的 market1 和 market2 组合
+                processed_pairs = set()
+
+                # 找出所有可能的两个交易所组合
+                exchange_ids = list(manager.exchanges.keys())
+                for i in range(len(exchange_ids)):
+                    for j in range(i, len(exchange_ids)):
+                        exchange1 = exchange_ids[i]
+                        exchange2 = exchange_ids[j]
+
+                        # 找出这两个交易所的共同币对
+                        spot_bases1 = set(exchange_data[exchange1]['spot'].keys())
+                        swap_bases1 = set(exchange_data[exchange1]['swap'].keys())
+                        all_bases1 = spot_bases1.union(swap_bases1)
+
+                        spot_bases2 = set(exchange_data[exchange2]['spot'].keys())
+                        swap_bases2 = set(exchange_data[exchange2]['swap'].keys())
+                        all_bases2 = spot_bases2.union(swap_bases2)
+
+                        common_bases = all_bases1.intersection(all_bases2)
+
+                        # 计算这些共同币对的价差
+                        for base in common_bases:
+                            markets_data = [
+                                {'name': f'{exchange1.upper()}:spot', 'data': exchange_data[exchange1]['spot'].get(base)},
+                                {'name': f'{exchange1.upper()}:perp', 'data': exchange_data[exchange1]['swap'].get(base)},
+                                {'name': f'{exchange2.upper()}:spot', 'data': exchange_data[exchange2]['spot'].get(base)},
+                                {'name': f'{exchange2.upper()}:perp', 'data': exchange_data[exchange2]['swap'].get(base)}
+                            ]
+
+                            # 计算所有可能的价差组合
+                            for k in range(len(markets_data)):
+                                for l in range(len(markets_data)):
+                                    if k != l:  # 不同市场之间比较
+                                        market_k = markets_data[k]
+                                        market_l = markets_data[l]
+
+                                        # 检查交易方向是否有效
+                                        if not is_valid_arb_direction(market_k['name'], market_l['name']):
+                                            continue
+
+                                        # 使用ask和bid价格计算价差
+                                        if market_k['data'] and market_l['data']:
+                                            ask_price = market_k['data']['ask']
+                                            bid_price = market_l['data']['bid']
+
+                                            # 检查价格是否为None或者0
+                                            if ask_price is not None and bid_price is not None and ask_price > 0 and bid_price > 0:
+                                                # 计算可交易数量和对应的USDT价值
+                                                tradeable_value_usdt = min(
+                                                    market_k['data']['askVolume'] * market_k['data']['ask'],
+                                                    market_l['data']['bidVolume'] * market_l['data']['bid']
+                                                )
+
+                                                # 只处理流动性大于100 USDT的交易对
+                                                if tradeable_value_usdt >= 100:
+                                                    # 计算价差
+                                                    diff = ((bid_price - ask_price) / ((ask_price + bid_price) / 2)) * 100
+
+                                                    # 生成 market1 和 market2 的组合名称
+                                                    pair_name = f"{market_k['name']}_{market_l['name']}"
+                                                    if pair_name not in processed_pairs:
+                                                        if 0 < diff < 100:
+                                                            diff_info = {
+                                                                'base': base,
+                                                                'diff': diff,
+                                                                'market1': market_k['name'],
+                                                                'market2': market_l['name'],
+                                                                'ask_price': ask_price,
+                                                                'bid_price': bid_price,
+                                                                'ask_volume': market_k['data']['askVolume'],
+                                                                'bid_volume': market_l['data']['bidVolume'],
+                                                                'tradeable_value_usdt': tradeable_value_usdt,
+                                                                'symbols': {
+                                                                    'market1': market_k['data']['symbol'],
+                                                                    'market2': market_l['data']['symbol']
+                                                                }
+                                                            }
+                                                            all_diffs.append(diff_info)
+                                                            processed_pairs.add(pair_name)
+
                 # 按价差降序排序并获取前10个
-                top_diffs = sorted(max_diffs_by_base.values(), key=lambda x: x['diff'], reverse=True)[:10]
-                
+                top_diffs = sorted(all_diffs, key=lambda x: x['diff'], reverse=True)[:10]
+
+                # 为相同币种的不同套利路径添加标识
+                symbol_count = {}
+                for diff_info in top_diffs:
+                    base = diff_info['base']
+                    if base not in symbol_count:
+                        symbol_count[base] = 0
+                    else:
+                        symbol_count[base] += 1
+                        diff_info['base'] = f"{base}({symbol_count[base]})"
+
                 # 清屏
                 print('\033[2J\033[H', end='')
                 print(f"Top 10 Price Differences - {current_time}")
@@ -301,30 +320,30 @@ def get_exchange_price_diff():
                 print(f"{'Symbol':<10} {'Market1':<15} {'Bid1/Ask1':<25} {'Market2':<15} {'Bid2/Ask2':<25} "
                       f"{'MaxDiff':<12} {'Volume(USDT)':<15} {'Fees':<10} {'Net Profit':<12}")
                 print("-" * 220)
-                
+
                 # 输出前10个最大价差
                 for diff_info in top_diffs:
                     # 获取两个市场的完整数据
-                    market1_data = exchange_data[diff_info['market1'].split(':')[0].lower()][
-                        'spot' if ':spot' in diff_info['market1'] else 'swap'
-                    ][diff_info['base']]
-                    
-                    market2_data = exchange_data[diff_info['market2'].split(':')[0].lower()][
-                        'spot' if ':spot' in diff_info['market2'] else 'swap'
-                    ][diff_info['base']]
-                    
+                    market1_exchange = diff_info['market1'].split(':')[0].lower()
+                    market1_type = 'spot' if ':spot' in diff_info['market1'] else 'swap'
+                    market1_data = exchange_data[market1_exchange][market1_type].get(diff_info['base'].split('(')[0])
+
+                    market2_exchange = diff_info['market2'].split(':')[0].lower()
+                    market2_type = 'spot' if ':spot' in diff_info['market2'] else 'swap'
+                    market2_data = exchange_data[market2_exchange][market2_type].get(diff_info['base'].split('(')[0])
+
                     # 计算手续费
                     total_fees = manager.calculate_fees(diff_info['market1'], diff_info['market2'])
-                    
+
                     # 计算净利润
                     net_profit = diff_info['diff'] - total_fees
-                    
+
                     # 计算交易量（USDT）
                     volume_usdt = diff_info['tradeable_value_usdt']
-                    
+
                     # 使用不同颜色显示净利润
                     profit_color = GREEN if net_profit > 0 else '\033[31m'
-                    
+
                     print(f"{diff_info['base']:<10} "
                           f"{diff_info['market1']:<15} "
                           f"{market1_data['bid']:<12.8f}/{market1_data['ask']:<12.8f} "
@@ -334,16 +353,16 @@ def get_exchange_price_diff():
                           f"${volume_usdt:<14,.2f} "
                           f"{total_fees:>7.4f}% "
                           f"{profit_color}{net_profit:>7.4f}%{RESET}")
-                
+
                 break
-                
+
             except Exception as e:
                 retry_count += 1
                 manager.logger.error(f"错误: {str(e)}", exc_info=True)
                 if retry_count == max_retries:
                     manager.logger.error("达到最大重试次数，等待下一轮")
                 time.sleep(2 ** retry_count)
-        
+
         time.sleep(1)
 
 if __name__ == "__main__":
