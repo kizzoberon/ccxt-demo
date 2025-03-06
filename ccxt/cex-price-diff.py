@@ -1,3 +1,5 @@
+import os
+
 import ccxt
 import time
 from datetime import datetime
@@ -8,6 +10,18 @@ import concurrent.futures
 # 在文件开头添加颜色常量
 GREEN = '\033[32m'
 RESET = '\033[0m'
+
+# 费率表 - 使用taker费率
+fees = {
+    'BYBIT:spot': {'taker': 0.001 * 0.67},   # 原始0.1% 返还33%
+    'BYBIT:perp': {'taker': 0.00055 * 0.67},  # 原始0.055% 返还33%
+    'BITGET:spot': {'taker': 0.001 * 0.5},  # 原始0.1% 返还50%
+    'BITGET:perp': {'taker': 0.0006 * 0.5}, # 原始0.06% 返还50%
+    'BINANCE:spot': {'taker': 0.001 * 0.8}, # 原始0.1% 返还20%
+    'BINANCE:perp': {'taker': 0.0005 * 0.8},# 原始0.04% 返还20%
+    'OKX:spot': {'taker': 0.001 * 0.8},     # 原始0.1% 返还20%
+    'OKX:perp': {'taker': 0.0005 * 0.8}     # 原始0.05% 返还20%
+}
 
 def setup_logger():
     logging.basicConfig(
@@ -62,6 +76,14 @@ class ExchangeManager:
     
     def _init_markets(self):
         """初始化所有交易所的市场信息"""
+        # 读取配置文件中的代币列表
+        coins_file = 'ccxt/config/coins.txt'
+        coins_to_filter = set()
+        if os.path.exists(coins_file):
+            with open(coins_file, 'r') as f:
+                coins = f.read().strip().split('\n')
+                coins_to_filter = {coin.strip() for coin in coins if coin.strip()}
+
         for exchange_id, exchange in self.exchanges.items():
             try:
                 self.markets[exchange_id] = exchange.load_markets()
@@ -73,6 +95,13 @@ class ExchangeManager:
                 perp_symbols = [symbol for symbol in self.markets[exchange_id] 
                               if 'USDT' in symbol 
                               and self.markets[exchange_id][symbol].get('swap')]
+                
+                # 如果配置文件中有代币列表，则进行过滤
+                if coins_to_filter:
+                    spot_symbols = [symbol for symbol in spot_symbols 
+                                  if any(coin + '/USDT' in symbol for coin in coins_to_filter)]
+                    perp_symbols = [symbol for symbol in perp_symbols 
+                                  if any(coin + '/USDT:' in symbol for coin in coins_to_filter)]
                 
                 self.symbols[exchange_id] = {
                     'spot': spot_symbols,
@@ -140,18 +169,6 @@ class ExchangeManager:
 
     def calculate_fees(self, market1: str, market2: str) -> float:
         """计算套利手续费"""
-        # 费率表 - 使用taker费率
-        fees = {
-            'BYBIT:spot': {'taker': 0.001},   # 0.1%
-            'BYBIT:perp': {'taker': 0.0006},  # 0.06%
-            'BITGET:spot': {'taker': 0.001},  # 0.1%
-            'BITGET:perp': {'taker': 0.0006}, # 0.06%
-            'BINANCE:spot': {'taker': 0.001}, # 0.1%
-            'BINANCE:perp': {'taker': 0.0004},# 0.04%
-            'OKX:spot': {'taker': 0.001},     # 0.1%
-            'OKX:perp': {'taker': 0.0005}     # 0.05%
-        }
-        
         market1_fee = fees[market1]['taker']
         market2_fee = fees[market2]['taker']
         
@@ -241,7 +258,7 @@ def process_market_pair_diff(market_k, market_l, base, processed_pairs, all_diff
 
     diff = ((bid_price - ask_price) / ((ask_price + bid_price) / 2)) * 100
     
-    if not (0 < diff < 100):
+    if diff >= 100:
         return
 
     diff_info = {
