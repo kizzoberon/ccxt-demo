@@ -5,3 +5,5 @@ ccxt
 pandas
 urllib3==1.26.6
 
+aiohttp_socks
+
