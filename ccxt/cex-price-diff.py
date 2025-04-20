@@ -6,6 +6,7 @@ from datetime import datetime
 import logging
 from typing import Dict, List, Optional
 import concurrent.futures
+import argparse  # 新增：用于解析命令行参数
 
 # 在文件开头添加颜色常量
 GREEN = '\033[32m'
@@ -33,38 +34,31 @@ def setup_logger():
 logger = setup_logger()
 
 class ExchangeManager:
-    def __init__(self, proxy_url: str):
-        self.proxy_settings = {
-            'http': proxy_url,
-            'https': proxy_url
-        }
+    def __init__(self, proxy_url: Optional[str] = None):
+        # 修改初始化方法，使代理为可选项
+        self.proxy_settings = None
+        if proxy_url:
+            self.proxy_settings = {
+                'http': proxy_url,
+                'https': proxy_url
+            }
         
         # 初始化交易所
+        exchange_configs = {
+            'enableRateLimit': True,
+            'timeout': 10000,
+            'options': {'verify': False}
+        }
+        
+        # 如果有代理设置则添加到配置中
+        if self.proxy_settings:
+            exchange_configs['proxies'] = self.proxy_settings
+        
         self.exchanges = {
-            'bybit': ccxt.bybit({
-                'enableRateLimit': True,
-                'timeout': 10000,
-                'proxies': self.proxy_settings,
-                'options': {'verify': False}
-            }),
-            'bitget': ccxt.bitget({
-                'enableRateLimit': True,
-                'timeout': 10000,
-                'proxies': self.proxy_settings,
-                'options': {'verify': False}
-            }),
-            'binance': ccxt.binance({
-                'enableRateLimit': True,
-                'timeout': 10000,
-                'proxies': self.proxy_settings,
-                'options': {'verify': False}
-            }),
-            'okx': ccxt.okx({
-                'enableRateLimit': True,
-                'timeout': 10000,
-                'proxies': self.proxy_settings,
-                'options': {'verify': False}
-            })
+            'bybit': ccxt.bybit(exchange_configs),
+            'bitget': ccxt.bitget(exchange_configs),
+            'binance': ccxt.binance(exchange_configs),
+            'okx': ccxt.okx(exchange_configs)
         }
         
         # 存储市场信息
@@ -315,7 +309,15 @@ def display_results(manager, top_diffs, exchange_data, current_time):
 def get_exchange_price_diff():
     """主函数"""
     try:
-        manager = ExchangeManager('http://127.0.0.1:7897')
+        # 添加命令行参数解析
+        parser = argparse.ArgumentParser(description='交易所价差监控工具')
+        parser.add_argument('-p', '--proxy', 
+                          help='代理服务器地址，例如：http://127.0.0.1:7897',
+                          default=None)
+        args = parser.parse_args()
+        
+        # 使用可选的代理地址初始化 ExchangeManager
+        manager = ExchangeManager(args.proxy)
         max_retries = 3
 
         while True:
