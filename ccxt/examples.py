@@ -55,6 +55,25 @@ async def test_ws():
         orderbook = await exchange.watch_order_book('BTC/USD')
         print(orderbook['asks'][0], orderbook['bids'][0])
 
+async def fetch_bitget_margin_info():
+    proxy_url = 'http://127.0.0.1:7897'
+    proxy_settings = {
+        'http': proxy_url,
+        'https': proxy_url
+    }
+
+    exchange = ccxt.okx({
+        'proxies': proxy_settings,
+    })
+    
+    try:
+        borrow_data = await exchange.fetch_cross_borrow_rates()
+        print(borrow_data)
+    except Exception as e:
+        logging.error(e, exc_info=True)
+    finally:
+        await exchange.close()
 
 if __name__ == '__main__':
-    asyncio.run(example_web_sockets())
+    # asyncio.run(example_web_sockets())
+    asyncio.run(fetch_bitget_margin_info())
