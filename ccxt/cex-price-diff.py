@@ -1,12 +1,12 @@
+import argparse  # 新增：用于解析命令行参数
+import concurrent.futures
+import logging
 import os
-
-import ccxt
 import time
 from datetime import datetime
-import logging
 from typing import Dict, List, Optional
-import concurrent.futures
-import argparse  # 新增：用于解析命令行参数
+
+import ccxt
 
 # 在文件开头添加颜色常量
 GREEN = '\033[32m'
@@ -21,8 +21,12 @@ fees = {
     'BINANCE:spot': {'taker': 0.001 * 0.8}, # 原始0.1% 返还20%
     'BINANCE:perp': {'taker': 0.0005 * 0.8},# 原始0.04% 返还20%
     'OKX:spot': {'taker': 0.001 * 0.8},     # 原始0.1% 返还20%
-    'OKX:perp': {'taker': 0.0005 * 0.8}     # 原始0.05% 返还20%
+    'OKX:perp': {'taker': 0.0005 * 0.8},     # 原始0.05% 返还20%
+    'GATE:spot': {'taker': 0.001 * 0.5}, # 原始0.1% 返还50%
+    'GATE:perp': {'taker': 0.0005 * 0.4}, # 原始0.05% 返还60%
 }
+
+cex = ['bybit', 'bitget', 'binance', 'okx', 'gate']
 
 def setup_logger():
     logging.basicConfig(
@@ -53,13 +57,15 @@ class ExchangeManager:
         # 如果有代理设置则添加到配置中
         if self.proxy_settings:
             exchange_configs['proxies'] = self.proxy_settings
-        
-        self.exchanges = {
-            'bybit': ccxt.bybit(exchange_configs),
-            'bitget': ccxt.bitget(exchange_configs),
-            'binance': ccxt.binance(exchange_configs),
-            'okx': ccxt.okx(exchange_configs)
-        }
+
+        # 遍历cex列表，初始化交易所
+        self.exchanges = {}
+        for exchange_id in cex:
+            try:
+                exchange_class = getattr(ccxt, exchange_id)
+                self.exchanges[exchange_id] = exchange_class(exchange_configs)
+            except Exception as e:
+                logger.error(f"初始化{exchange_id}失败: {str(e)}")
         
         # 存储市场信息
         self.markets = {}
@@ -89,13 +95,13 @@ class ExchangeManager:
                 perp_symbols = [symbol for symbol in self.markets[exchange_id] 
                               if 'USDT' in symbol 
                               and self.markets[exchange_id][symbol].get('swap')]
-                
+
                 # 如果配置文件中有代币列表，则进行过滤
                 if coins_to_filter:
                     spot_symbols = [symbol for symbol in spot_symbols 
-                                  if any(coin + '/USDT' in symbol for coin in coins_to_filter)]
+                                  if any(symbol.startswith(coin + '/USDT') for coin in coins_to_filter)]
                     perp_symbols = [symbol for symbol in perp_symbols 
-                                  if any(coin + '/USDT:' in symbol for coin in coins_to_filter)]
+                                  if any(symbol.startswith(coin + '/USDT:') for coin in coins_to_filter)]
                 
                 self.symbols[exchange_id] = {
                     'spot': spot_symbols,
@@ -118,7 +124,11 @@ class ExchangeManager:
         
         def fetch_batch(batch_symbols):
             try:
-                return exchange.fetch_tickers(batch_symbols)
+                if len(batch_symbols) == 1:
+                    ticker = exchange.fetch_ticker(batch_symbols[0])
+                    return {ticker['symbol']: ticker}
+                else:
+                    return exchange.fetch_tickers(batch_symbols)
             except Exception as e:
                 logger.error(f"获取{exchange_id}数据失败: {str(e)}")
                 return {}
@@ -159,6 +169,10 @@ class ExchangeManager:
                     'askVolume': ticker['askVolume'],
                     'baseVolume': ticker['baseVolume']  # 24小时交易量
                 }
+                if exchange_id == 'gate':
+                    # 字符串转浮点
+                    prices[base]['bidVolume'] =float(ticker['info']['highest_size'])
+                    prices[base]['askVolume'] = float(ticker['info']['lowest_size'])
         return prices
 
     def calculate_fees(self, market1: str, market2: str) -> float:
@@ -242,13 +256,17 @@ def process_market_pair_diff(market_k, market_l, base, processed_pairs, all_diff
     if not (ask_price and bid_price and ask_price > 0 and bid_price > 0):
         return
 
+    # bidVolume 或 askVolume 为 None 时，直接返回
+    if market_k['data']['askVolume'] is None or market_l['data']['askVolume'] is None :
+        return
+
     tradeable_value_usdt = min(
         market_k['data']['askVolume'] * market_k['data']['ask'],
         market_l['data']['bidVolume'] * market_l['data']['bid']
     )
 
-    if tradeable_value_usdt < 100:
-        return
+    # if tradeable_value_usdt < 100:
+    #     return
 
     diff = ((bid_price - ask_price) / ((ask_price + bid_price) / 2)) * 100
     
