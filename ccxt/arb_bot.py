@@ -70,35 +70,47 @@ class ArbitrageBot:
                 orderbook1 = await self.exchange1.watch_order_book(self.config.market1.name)
                 orderbook2 = await self.exchange2.watch_order_book(self.config.market2.name)
                 
-                # 获取价格
+                # 获取价格和挂单量
                 ask1 = orderbook1['asks'][0][0] if len(orderbook1['asks']) > 0 else None
+                ask1_volume = orderbook1['asks'][0][1] if len(orderbook1['asks']) > 0 else None
                 bid1 = orderbook1['bids'][0][0] if len(orderbook1['bids']) > 0 else None
+                bid1_volume = orderbook1['bids'][0][1] if len(orderbook1['bids']) > 0 else None
                 ask2 = orderbook2['asks'][0][0] if len(orderbook2['asks']) > 0 else None
+                ask2_volume = orderbook2['asks'][0][1] if len(orderbook2['asks']) > 0 else None
                 bid2 = orderbook2['bids'][0][0] if len(orderbook2['bids']) > 0 else None
+                bid2_volume = orderbook2['bids'][0][1] if len(orderbook2['bids']) > 0 else None
                 
-                # 计算正向和反向价差
+                # 计算正向和反向价差及相关信息
                 if self.config.market1.direction == '+' and self.config.market2.direction == '-':
-                    # 正向价差：market2(卖方bid) - market1(买方ask)
+                    # 正向套利：在market1买入，在market2卖出
+                    forward_min_volume = min(ask1_volume or 0, bid2_volume or 0)
                     forward_spread = (bid2 - ask1) / ((bid2 + ask1) / 2) * 100 if (bid2 and ask1) else None
+                    forward_profit = (bid2 * forward_min_volume - ask1 * forward_min_volume) if (bid2 and ask1) else None
                     forward_direction = f"+{self.config.market1.exchange}({self.config.market1.name})-{self.config.market2.exchange}({self.config.market2.name})"
                     
-                    # 反向价差：market1(卖方bid) - market2(买方ask)
+                    # 反向套利：在market2买入，在market1卖出
+                    reverse_min_volume = min(ask2_volume or 0, bid1_volume or 0)
                     reverse_spread = (bid1 - ask2) / ((bid1 + ask2) / 2) * 100 if (bid1 and ask2) else None
+                    reverse_profit = (bid1 * reverse_min_volume - ask2 * reverse_min_volume) if (bid1 and ask2) else None
                     reverse_direction = f"+{self.config.market2.exchange}({self.config.market2.name})-{self.config.market1.exchange}({self.config.market1.name})"
                 else:
-                    # 正向价差：market1(卖方bid) - market2(买方ask)
+                    # 正向套利：在market2买入，在market1卖出
+                    forward_min_volume = min(ask2_volume or 0, bid1_volume or 0)
                     forward_spread = (bid1 - ask2) / ((bid1 + ask2) / 2) * 100 if (bid1 and ask2) else None
+                    forward_profit = (bid1 * forward_min_volume - ask2 * forward_min_volume) if (bid1 and ask2) else None
                     forward_direction = f"+{self.config.market2.exchange}({self.config.market2.name})-{self.config.market1.exchange}({self.config.market1.name})"
                     
-                    # 反向价差：market2(卖方bid) - market1(买方ask)
+                    # 反向套利：在market1买入，在market2卖出
+                    reverse_min_volume = min(ask1_volume or 0, bid2_volume or 0)
                     reverse_spread = (bid2 - ask1) / ((bid2 + ask1) / 2) * 100 if (bid2 and ask1) else None
+                    reverse_profit = (bid2 * reverse_min_volume - ask1 * reverse_min_volume) if (bid2 and ask1) else None
                     reverse_direction = f"+{self.config.market1.exchange}({self.config.market1.name})-{self.config.market2.exchange}({self.config.market2.name})"
                 
                 # 输出价格信息
                 logger.info(f"{self.config.market1.exchange} {self.config.market1.name} - "
-                          f"Bid: {bid1} | Ask: {ask1}")
+                          f"Bid: {bid1} (Vol: {bid1_volume:.4f}) | Ask: {ask1} (Vol: {ask1_volume:.4f})")
                 logger.info(f"{self.config.market2.exchange} {self.config.market2.name} - "
-                          f"Bid: {bid2} | Ask: {ask2}")
+                          f"Bid: {bid2} (Vol: {bid2_volume:.4f}) | Ask: {ask2} (Vol: {ask2_volume:.4f})")
                 
                 # 输出正向和反向价差
                 logger.info(f"正向价差 ({forward_direction}): {forward_spread:.4f}% (阈值: {float(self.config.priceDiff)*100}%)")
@@ -106,11 +118,21 @@ class ArbitrageBot:
                 
                 # 检查正向价差是否超过阈值
                 if forward_spread and forward_spread > float(self.config.priceDiff) * 100:
-                    logger.warning(f"发现正向套利机会！{forward_direction} 价差 {forward_spread:.4f}% 超过阈值")
+                    logger.warning(
+                        f"发现正向套利机会！{forward_direction} "
+                        f"价差 {forward_spread:.4f}% 超过阈值，"
+                        f"最小可交易量: {forward_min_volume:.4f}，"
+                        f"预期利润: {forward_profit:.2f} USDT"
+                    )
                 
                 # 检查反向价差是否超过阈值
                 if reverse_spread and reverse_spread > float(self.config.priceDiff) * 100:
-                    logger.warning(f"发现反向套利机会！{reverse_direction} 价差 {reverse_spread:.4f}% 超过阈值")
+                    logger.warning(
+                        f"发现反向套利机会！{reverse_direction} "
+                        f"价差 {reverse_spread:.4f}% 超过阈值，"
+                        f"最小可交易量: {reverse_min_volume:.4f}，"
+                        f"预期利润: {reverse_profit:.2f} USDT"
+                    )
                 
             except Exception as e:
                 logger.error(f"发生错误: {str(e)}")
