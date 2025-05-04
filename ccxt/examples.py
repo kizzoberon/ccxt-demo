@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 
 import ccxt.async_support as ccxt
 import ccxt.pro as ccxtpro  # 使用ccxt pro
@@ -52,7 +53,7 @@ async def test_ws():
     exchange.http_proxy = 'http://127.0.0.1:7897/'
     exchange.ws_proxy = 'http://127.0.0.1:7897/'
     while True:
-        orderbook = await exchange.watch_order_book('BTC/USD')
+        orderbook = await exchange.watch_order_book('BTC/USDT')
         print(orderbook['asks'][0], orderbook['bids'][0])
 
 async def fetch_bitget_margin_info():
@@ -75,5 +76,8 @@ async def fetch_bitget_margin_info():
         await exchange.close()
 
 if __name__ == '__main__':
+    # 在 Windows 平台上强制使用 SelectorEventLoop
+    if sys.platform.startswith('win'):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     # asyncio.run(example_web_sockets())
-    asyncio.run(fetch_bitget_margin_info())
+    asyncio.run(test_ws())
