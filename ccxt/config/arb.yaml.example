@@ -1,0 +1,21 @@
+# This is an example configuration file for the arbitrage bot.
+# Please copy this file to arb.yaml and modify it.
+
+# number or loop
+times: "1"
+maxSize: 100
+perSize: 2
+priceDiff: "0.001"
+market1:
+  type: spot
+  name: BTC/USDT
+  exchange: gate
+  direction: "+"
+  multiple: "1.001"
+market2:
+  type: perp
+  name: BTC/USDT:USDT
+  exchange: gate
+  direction: "-"
+  multiple: "1"
+stop: false
