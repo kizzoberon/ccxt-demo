@@ -105,11 +105,11 @@ class ArbitrageBot:
                 logger.info(f"反向价差 ({reverse_direction}): {reverse_spread:.4f}% (阈值: {float(self.config.priceDiff)*100}%)")
                 
                 # 检查正向价差是否超过阈值
-                if forward_spread and abs(forward_spread) > float(self.config.priceDiff) * 100:
+                if forward_spread and forward_spread > float(self.config.priceDiff) * 100:
                     logger.warning(f"发现正向套利机会！{forward_direction} 价差 {forward_spread:.4f}% 超过阈值")
                 
                 # 检查反向价差是否超过阈值
-                if reverse_spread and abs(reverse_spread) > float(self.config.priceDiff) * 100:
+                if reverse_spread and reverse_spread > float(self.config.priceDiff) * 100:
                     logger.warning(f"发现反向套利机会！{reverse_direction} 价差 {reverse_spread:.4f}% 超过阈值")
                 
             except Exception as e:
