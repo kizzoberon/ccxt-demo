@@ -171,8 +171,10 @@ class ExchangeManager:
                 }
                 if exchange_id == 'gate':
                     # 字符串转浮点
-                    prices[base]['bidVolume'] =float(ticker['info']['highest_size'])
-                    prices[base]['askVolume'] = float(ticker['info']['lowest_size'])
+                    if ticker['info'].get('highest_price'):
+                        prices[base]['bid'] = float(ticker['info']['highest_price'])
+                    if ticker['info'].get('lowest_price'):
+                        prices[base]['ask'] = float(ticker['info']['lowest_price'])
         return prices
 
     def calculate_fees(self, market1: str, market2: str) -> float:
