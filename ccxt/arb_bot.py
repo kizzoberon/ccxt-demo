@@ -139,7 +139,7 @@ if __name__ == '__main__':
                       default=None)
     parser.add_argument('-c', '--config',
                       help='配置文件路径',
-                      default='config/arb.yaml.example')
+                      default='config/arb.yaml')
     parser.add_argument('-l', '--log',
                       help='日志文件路径，默认为 .log/arb_bot.log',
                       default=None)
