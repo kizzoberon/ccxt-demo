@@ -1,9 +1,6 @@
 # 导入ccxt依赖
-ccxt
-
-# 导入pandas依赖
-pandas
+ccxt==4.1.13
+pandas==2.1.4
 urllib3==1.26.6
-
-aiohttp_socks
-
+aiohttp_socks==0.8.4
+pyyaml==6.0.1
